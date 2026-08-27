@@ -16,6 +16,6 @@ System.out.println(new Engine().teamName());
 LOGGER.debug("engine stopped");
 }
 String teamName() {
-return "Team <your team name>";
+return "Team FastSnailBase";
 }
 }
