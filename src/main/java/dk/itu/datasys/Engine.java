@@ -18,6 +18,6 @@ public final class Engine {
     }
 
     String teamName() {
-        return "Team FastSnailBase";
+        return "The Query Crew";
     }
 }
