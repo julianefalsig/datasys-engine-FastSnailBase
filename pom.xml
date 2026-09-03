@@ -12,9 +12,17 @@
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <log4j.version>2.26.1</log4j.version>
+        <jackson.version>2.18.2</jackson.version>
     </properties>
 
     <dependencies>
+        <!-- Catalog format (JSON), per storage-design.md; the data files are our own binary format -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+
         <!-- Logging API: your code compiles only against SLF4J -->
         <dependency>
             <groupId>org.slf4j</groupId>
