@@ -46,3 +46,7 @@ buildNumber.properties
 
 # OS
 .DS_Store
+
+# Output files
+logs/
+target/
