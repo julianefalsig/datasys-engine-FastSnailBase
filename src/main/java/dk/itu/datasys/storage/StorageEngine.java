@@ -25,13 +25,11 @@ public final class StorageEngine {
     private final Map<String, CatalogData> catalogs = new ConcurrentHashMap<>();
     private volatile ScanStats lastScanStats;
 
-    /** All persistent state (catalog + data files) lives under this directory. */
     public StorageEngine(Path dataDirectory) {
         this(dataDirectory, DEFAULT_MAX_ROWS_PER_PARTITION);
     }
 
-    /** Package-private: lets tests in this package use tiny partition sizes without widening the public API. */
-    StorageEngine(Path dataDirectory, int defaultMaxRowsPerPartition) {
+    public StorageEngine(Path dataDirectory, int defaultMaxRowsPerPartition) {
         this.dataDirectory = dataDirectory;
         this.defaultMaxRowsPerPartition = defaultMaxRowsPerPartition;
         try {
