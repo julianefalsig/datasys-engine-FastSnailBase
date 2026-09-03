@@ -11,40 +11,66 @@ import java.util.Map;
  */
 final class CatalogData {
 
-    public List<ColumnEntry> columns = new ArrayList<>();
+    public List<ColumnSpec> columns = new ArrayList<>();
     public int maxRowsPerPartition;
-    public List<PartitionEntry> partitions = new ArrayList<>();
+    public List<Partition> partitions = new ArrayList<>();
 
-    static final class ColumnEntry {
-        public String name;
-        public ColumnType type;
-
-        ColumnEntry() {
-        }
-
-        ColumnEntry(String name, ColumnType type) {
-            this.name = name;
-            this.type = type;
-        }
+    record Partition(String dataFile, int rowCount, Map<String, Range> stats) {
     }
 
-    static final class PartitionEntry {
-        public String dataFile;
-        public int rowCount;
-        public Map<String, ColumnStatsEntry> stats = new LinkedHashMap<>();
+    /** min/max as JSON numbers or strings matching the column type. */
+    record Range(Object min, Object max) {
     }
 
-    /** min/max stored as strings, parsed back to the column's native type using the schema. */
-    static final class ColumnStatsEntry {
-        public String min;
-        public String max;
-
-        ColumnStatsEntry() {
+    void coerceStats() {
+        List<Partition> coerced = new ArrayList<>(partitions.size());
+        for (Partition partition : partitions) {
+            Map<String, Range> stats = new LinkedHashMap<>();
+            for (ColumnSpec column : columns) {
+                Range range = partition.stats().get(column.name());
+                if (range == null) {
+                    throw new IllegalStateException(
+                            "catalog is missing min/max for column " + column.name());
+                }
+                stats.put(column.name(), new Range(
+                        coerce(range.min(), column.type()),
+                        coerce(range.max(), column.type())));
+            }
+            coerced.add(new Partition(partition.dataFile(), partition.rowCount(), stats));
         }
+        partitions.clear();
+        partitions.addAll(coerced);
+    }
 
-        ColumnStatsEntry(String min, String max) {
-            this.min = min;
-            this.max = max;
+    static Object coerce(Object raw, ColumnType type) {
+        if (raw == null) {
+            throw new IllegalArgumentException("min/max must not be null for type " + type);
         }
+        return switch (type) {
+            case LONG -> {
+                if (raw instanceof Number number) {
+                    yield number.longValue();
+                }
+                if (raw instanceof String text) {
+                    yield Long.parseLong(text);
+                }
+                throw new IllegalArgumentException("cannot coerce " + raw.getClass().getSimpleName() + " to LONG");
+            }
+            case DOUBLE -> {
+                if (raw instanceof Number number) {
+                    yield number.doubleValue();
+                }
+                if (raw instanceof String text) {
+                    yield Double.parseDouble(text);
+                }
+                throw new IllegalArgumentException("cannot coerce " + raw.getClass().getSimpleName() + " to DOUBLE");
+            }
+            case STRING -> {
+                if (raw instanceof String text) {
+                    yield text;
+                }
+                throw new IllegalArgumentException("cannot coerce " + raw.getClass().getSimpleName() + " to STRING");
+            }
+        };
     }
 }

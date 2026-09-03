@@ -29,7 +29,9 @@ final class CatalogStore {
 
     static CatalogData read(Path tableDirectory) {
         try {
-            return MAPPER.readValue(catalogPath(tableDirectory).toFile(), CatalogData.class);
+            CatalogData data = MAPPER.readValue(catalogPath(tableDirectory).toFile(), CatalogData.class);
+            data.coerceStats();
+            return data;
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

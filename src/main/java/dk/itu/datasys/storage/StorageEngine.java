@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -66,9 +67,7 @@ public final class StorageEngine {
 
         CatalogData catalog = new CatalogData();
         catalog.maxRowsPerPartition = defaultMaxRowsPerPartition;
-        for (ColumnSpec column : columns) {
-            catalog.columns.add(new CatalogData.ColumnEntry(column.name(), column.type()));
-        }
+        catalog.columns.addAll(List.copyOf(columns));
 
         CatalogStore.write(tableDirectory(tableName), catalog);
         catalogs.put(tableName, catalog);
@@ -83,7 +82,7 @@ public final class StorageEngine {
                     "table " + tableName + " already has data; appending is not supported yet");
         }
 
-        List<ColumnSpec> columns = toColumnSpecs(catalog);
+        List<ColumnSpec> columns = catalog.columns;
         List<Object[]> rows = readCsv(csvFilePath, columns);
 
         int partitionIndex = 0;
@@ -116,23 +115,21 @@ public final class StorageEngine {
         String dataFileName = "partition-%d.bin".formatted(partitionIndex);
         PartitionFile.write(tableDirectory(tableName).resolve(dataFileName), columns, columnData, partitionRows.size());
 
-        CatalogData.PartitionEntry entry = new CatalogData.PartitionEntry();
-        entry.dataFile = dataFileName;
-        entry.rowCount = partitionRows.size();
+        Map<String, CatalogData.Range> statsByColumn = new LinkedHashMap<>();
         for (int c = 0; c < columnCount; c++) {
             ColumnSpec column = columns.get(c);
             ColumnStats stats = ColumnStats.of(columnData.get(c), column.type());
-            entry.stats.put(column.name(), new CatalogData.ColumnStatsEntry(stats.min.toString(), stats.max.toString()));
+            statsByColumn.put(column.name(), new CatalogData.Range(stats.min, stats.max));
             LOGGER.debug("op=copyFile table={} partition={} column={} min={} max={}",
                     tableName, partitionIndex, column.name(), stats.min, stats.max);
         }
-        catalog.partitions.add(entry);
+        catalog.partitions.add(new CatalogData.Partition(dataFileName, partitionRows.size(), statsByColumn));
     }
 
     public List<Object[]> select(String tableName, String columnName, Comparison comparison, Object constant) {
         long start = System.currentTimeMillis();
         CatalogData catalog = requireCatalog(tableName);
-        List<ColumnSpec> columns = toColumnSpecs(catalog);
+        List<ColumnSpec> columns = catalog.columns;
 
         int predicateIndex = -1;
         ColumnSpec predicateColumn = null;
@@ -154,10 +151,10 @@ public final class StorageEngine {
         int partitionsPruned = 0;
 
         for (int p = 0; p < catalog.partitions.size(); p++) {
-            CatalogData.PartitionEntry entry = catalog.partitions.get(p);
-            CatalogData.ColumnStatsEntry statsEntry = entry.stats.get(columnName);
-            Object min = parseStat(statsEntry.min, predicateColumn.type());
-            Object max = parseStat(statsEntry.max, predicateColumn.type());
+            CatalogData.Partition entry = catalog.partitions.get(p);
+            CatalogData.Range stats = entry.stats().get(columnName);
+            Object min = stats.min();
+            Object max = stats.max();
 
             boolean prune = Pruner.canPrune(comparison, constant, min, max, predicateColumn.type());
             LOGGER.debug("op=select table={} column={} comparison={} const={} partition={} min={} max={} decision={}",
@@ -170,9 +167,9 @@ public final class StorageEngine {
             partitionsRead++;
 
             List<List<Object>> partitionData =
-                    PartitionFile.readAllColumns(tableDirectory(tableName).resolve(entry.dataFile), columns);
+                    PartitionFile.readAllColumns(tableDirectory(tableName).resolve(entry.dataFile()), columns);
 
-            for (int r = 0; r < entry.rowCount; r++) {
+            for (int r = 0; r < entry.rowCount(); r++) {
                 Object value = partitionData.get(predicateIndex).get(r);
                 if (matches(comparison, constant, value, predicateColumn.type())) {
                     Object[] row = new Object[columns.size()];
@@ -209,14 +206,6 @@ public final class StorageEngine {
         return catalog;
     }
 
-    private static List<ColumnSpec> toColumnSpecs(CatalogData catalog) {
-        List<ColumnSpec> columns = new ArrayList<>(catalog.columns.size());
-        for (CatalogData.ColumnEntry entry : catalog.columns) {
-            columns.add(new ColumnSpec(entry.name, entry.type));
-        }
-        return columns;
-    }
-
     private static void requireMatchingType(ColumnSpec column, Object constant) {
         boolean matches = switch (column.type()) {
             case STRING -> constant instanceof String;
@@ -228,14 +217,6 @@ public final class StorageEngine {
                     "constant type %s does not match column %s of type %s"
                             .formatted(constant.getClass().getSimpleName(), column.name(), column.type()));
         }
-    }
-
-    private static Object parseStat(String raw, ColumnType type) {
-        return switch (type) {
-            case LONG -> Long.parseLong(raw);
-            case DOUBLE -> Double.parseDouble(raw);
-            case STRING -> raw;
-        };
     }
 
     private static boolean matches(Comparison comparison, Object constant, Object value, ColumnType type) {
